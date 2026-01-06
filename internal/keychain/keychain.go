@@ -3,8 +3,8 @@ package keychain
 import (
 	"fmt"
 	"os"
-
-	gokeychain "github.com/keybase/go-keychain"
+	"os/exec"
+	"strings"
 )
 
 const (
@@ -40,45 +40,36 @@ func DeleteAPIToken() error {
 }
 
 func getFromKeychain(account string) (string, error) {
-	query := gokeychain.NewItem()
-	query.SetSecClass(gokeychain.SecClassGenericPassword)
-	query.SetService(serviceName)
-	query.SetAccount(account)
-	query.SetMatchLimit(gokeychain.MatchLimitOne)
-	query.SetReturnData(true)
+	cmd := exec.Command("security", "find-generic-password",
+		"-s", serviceName,
+		"-a", account,
+		"-w")
 
-	results, err := gokeychain.QueryItem(query)
+	output, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 
-	if len(results) == 0 {
-		return "", fmt.Errorf("no item found")
-	}
-
-	return string(results[0].Data), nil
+	return strings.TrimSpace(string(output)), nil
 }
 
 func setInKeychain(account, value string) error {
-	// First try to delete any existing item
+	// First try to delete any existing item (ignore errors)
 	_ = deleteFromKeychain(account)
 
-	item := gokeychain.NewItem()
-	item.SetSecClass(gokeychain.SecClassGenericPassword)
-	item.SetService(serviceName)
-	item.SetAccount(account)
-	item.SetData([]byte(value))
-	item.SetSynchronizable(gokeychain.SynchronizableNo)
-	item.SetAccessible(gokeychain.AccessibleWhenUnlocked)
+	cmd := exec.Command("security", "add-generic-password",
+		"-s", serviceName,
+		"-a", account,
+		"-w", value,
+		"-U") // Update if exists
 
-	return gokeychain.AddItem(item)
+	return cmd.Run()
 }
 
 func deleteFromKeychain(account string) error {
-	item := gokeychain.NewItem()
-	item.SetSecClass(gokeychain.SecClassGenericPassword)
-	item.SetService(serviceName)
-	item.SetAccount(account)
+	cmd := exec.Command("security", "delete-generic-password",
+		"-s", serviceName,
+		"-a", account)
 
-	return gokeychain.DeleteItem(item)
+	return cmd.Run()
 }
