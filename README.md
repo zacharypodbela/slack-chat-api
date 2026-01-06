@@ -25,12 +25,35 @@ cd slack-cli
 make build
 ```
 
-## Configuration
+## Authentication
 
-Set your Slack API token (stored securely in macOS Keychain):
+### Option 1: OAuth Login (Recommended)
+
+This opens your browser and handles everything automatically:
 
 ```bash
-slack-cli config set-token xoxb-your-token-here
+slack-cli auth login
+```
+
+**First-time setup:**
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create or select your app
+2. Go to **OAuth & Permissions** and add this Redirect URL:
+   ```
+   http://localhost:8085/callback
+   ```
+3. Add the scopes listed below under **Bot Token Scopes**
+4. Note your **Client ID** and **Client Secret** from **Basic Information**
+5. Run `slack-cli auth login` and enter credentials when prompted
+
+Your Client ID/Secret are stored in Keychain for future logins.
+
+### Option 2: Manual Token
+
+If you already have a bot token:
+
+```bash
+slack-cli config set-token
+# Paste your token when prompted
 ```
 
 Or use an environment variable:
@@ -39,9 +62,15 @@ Or use an environment variable:
 export SLACK_API_TOKEN=xoxb-your-token-here
 ```
 
+### Check Auth Status
+
+```bash
+slack-cli auth status
+```
+
 ### Required Slack Scopes
 
-Your Slack app needs the following OAuth scopes:
+Add these scopes in your Slack app's OAuth & Permissions:
 
 - `channels:read` - List channels
 - `channels:write` - Create/archive channels
