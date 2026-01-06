@@ -1,0 +1,16 @@
+# Binary
+slack-cli
+
+# Build output
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Test coverage
+coverage.out

@@ -1,0 +1,53 @@
+version: 2
+
+project_name: slack-cli
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+brews:
+  - name: slack-cli
+    repository:
+      owner: piekstra
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://github.com/piekstra/slack-cli"
+    description: "Command-line interface for Slack"
+    license: "MIT"
+    install: |
+      bin.install "slack-cli"
+    caveats: |
+      To configure slack-cli, run:
+        slack-cli config set-token <your-slack-api-token>
+
+      Or set the SLACK_API_TOKEN environment variable.
+    test: |
+      assert_match "slack-cli", shell_output("#{bin}/slack-cli --help")

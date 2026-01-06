@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Build macOS ARM64
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o slack-cli .
+          tar -czvf slack-cli_${{ github.ref_name }}_darwin_arm64.tar.gz slack-cli
+          rm slack-cli
+
+      - name: Build macOS AMD64
+        run: |
+          GOOS=darwin GOARCH=amd64 go build -o slack-cli .
+          tar -czvf slack-cli_${{ github.ref_name }}_darwin_amd64.tar.gz slack-cli
+          rm slack-cli
+
+      - name: Generate checksums
+        run: |
+          shasum -a 256 *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            *.tar.gz
+            checksums.txt
+          generate_release_notes: true
+
+      - name: Update Homebrew Formula
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+
+          ARM64_SHA=$(shasum -a 256 slack-cli_${{ github.ref_name }}_darwin_arm64.tar.gz | cut -d' ' -f1)
+          AMD64_SHA=$(shasum -a 256 slack-cli_${{ github.ref_name }}_darwin_amd64.tar.gz | cut -d' ' -f1)
+
+          git clone https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/piekstra/homebrew-tap.git
+          cd homebrew-tap
+
+          cat > Formula/slack-cli.rb << EOF
+          class SlackCli < Formula
+            desc "Command-line interface for Slack"
+            homepage "https://github.com/piekstra/slack-cli"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/piekstra/slack-cli/releases/download/${{ github.ref_name }}/slack-cli_${{ github.ref_name }}_darwin_arm64.tar.gz"
+                sha256 "${ARM64_SHA}"
+              end
+              on_intel do
+                url "https://github.com/piekstra/slack-cli/releases/download/${{ github.ref_name }}/slack-cli_${{ github.ref_name }}_darwin_amd64.tar.gz"
+                sha256 "${AMD64_SHA}"
+              end
+            end
+
+            def install
+              bin.install "slack-cli"
+            end
+
+            def caveats
+              <<~EOS
+                To configure slack-cli, run:
+                  slack-cli config set-token <your-slack-api-token>
+
+                Or set the SLACK_API_TOKEN environment variable.
+              EOS
+            end
+
+            test do
+              assert_match "slack-cli", shell_output("#{bin}/slack-cli --help")
+            end
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/slack-cli.rb
+          git commit -m "Update slack-cli to ${VERSION}"
+          git push

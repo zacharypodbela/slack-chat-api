@@ -1,0 +1,508 @@
+package client
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/piekstra/slack-cli/internal/keychain"
+)
+
+const baseURL = "https://slack.com/api"
+
+// Client handles Slack API interactions
+type Client struct {
+	httpClient *http.Client
+	token      string
+}
+
+// New creates a new Slack client
+func New() (*Client, error) {
+	token, err := keychain.GetAPIToken()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		token:      token,
+	}, nil
+}
+
+// SlackResponse represents a generic Slack API response
+type SlackResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+func (c *Client) get(endpoint string, params url.Values) ([]byte, error) {
+	reqURL := fmt.Sprintf("%s/%s", baseURL, endpoint)
+	if params != nil {
+		reqURL += "?" + params.Encode()
+	}
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var slackResp SlackResponse
+	if err := json.Unmarshal(body, &slackResp); err != nil {
+		return nil, err
+	}
+
+	if !slackResp.OK {
+		return nil, fmt.Errorf("slack API error: %s", slackResp.Error)
+	}
+
+	return body, nil
+}
+
+func (c *Client) post(endpoint string, data interface{}) ([]byte, error) {
+	reqURL := fmt.Sprintf("%s/%s", baseURL, endpoint)
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var slackResp SlackResponse
+	if err := json.Unmarshal(body, &slackResp); err != nil {
+		return nil, err
+	}
+
+	if !slackResp.OK {
+		return nil, fmt.Errorf("slack API error: %s", slackResp.Error)
+	}
+
+	return body, nil
+}
+
+// Channel represents a Slack channel
+type Channel struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	IsPrivate  bool   `json:"is_private"`
+	IsArchived bool   `json:"is_archived"`
+	Topic      struct {
+		Value string `json:"value"`
+	} `json:"topic"`
+	Purpose struct {
+		Value string `json:"value"`
+	} `json:"purpose"`
+	NumMembers int `json:"num_members"`
+}
+
+// User represents a Slack user
+type User struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	RealName string `json:"real_name"`
+	IsAdmin  bool   `json:"is_admin"`
+	IsBot    bool   `json:"is_bot"`
+	Profile  struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+		StatusText  string `json:"status_text"`
+		StatusEmoji string `json:"status_emoji"`
+	} `json:"profile"`
+}
+
+// Message represents a Slack message
+type Message struct {
+	Type      string `json:"type"`
+	User      string `json:"user"`
+	Text      string `json:"text"`
+	TS        string `json:"ts"`
+	ThreadTS  string `json:"thread_ts,omitempty"`
+	ReplyCount int   `json:"reply_count,omitempty"`
+}
+
+// Team represents workspace info
+type Team struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Domain string `json:"domain"`
+}
+
+// ListChannels returns all channels
+func (c *Client) ListChannels(types string, excludeArchived bool, limit int) ([]Channel, error) {
+	params := url.Values{}
+	params.Set("exclude_archived", fmt.Sprintf("%t", excludeArchived))
+	params.Set("limit", fmt.Sprintf("%d", limit))
+	if types != "" {
+		params.Set("types", types)
+	}
+
+	body, err := c.get("conversations.list", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Channels []Channel `json:"channels"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return result.Channels, nil
+}
+
+// GetChannelInfo returns channel details
+func (c *Client) GetChannelInfo(channelID string) (*Channel, error) {
+	params := url.Values{}
+	params.Set("channel", channelID)
+
+	body, err := c.get("conversations.info", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Channel Channel `json:"channel"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return &result.Channel, nil
+}
+
+// ListUsers returns all users
+func (c *Client) ListUsers(limit int) ([]User, error) {
+	params := url.Values{}
+	params.Set("limit", fmt.Sprintf("%d", limit))
+
+	body, err := c.get("users.list", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Members []User `json:"members"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return result.Members, nil
+}
+
+// GetUserInfo returns user details
+func (c *Client) GetUserInfo(userID string) (*User, error) {
+	params := url.Values{}
+	params.Set("user", userID)
+
+	body, err := c.get("users.info", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		User User `json:"user"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return &result.User, nil
+}
+
+// SendMessage sends a message to a channel
+func (c *Client) SendMessage(channel, text, threadTS string) (*Message, error) {
+	data := map[string]interface{}{
+		"channel": channel,
+		"text":    text,
+	}
+	if threadTS != "" {
+		data["thread_ts"] = threadTS
+	}
+
+	body, err := c.post("chat.postMessage", data)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Message Message `json:"message"`
+		TS      string  `json:"ts"`
+		Channel string  `json:"channel"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	result.Message.TS = result.TS
+	return &result.Message, nil
+}
+
+// UpdateMessage updates an existing message
+func (c *Client) UpdateMessage(channel, ts, text string) error {
+	data := map[string]interface{}{
+		"channel": channel,
+		"ts":      ts,
+		"text":    text,
+	}
+
+	_, err := c.post("chat.update", data)
+	return err
+}
+
+// DeleteMessage deletes a message
+func (c *Client) DeleteMessage(channel, ts string) error {
+	data := map[string]interface{}{
+		"channel": channel,
+		"ts":      ts,
+	}
+
+	_, err := c.post("chat.delete", data)
+	return err
+}
+
+// GetChannelHistory returns message history
+func (c *Client) GetChannelHistory(channel string, limit int, oldest, latest string) ([]Message, error) {
+	params := url.Values{}
+	params.Set("channel", channel)
+	params.Set("limit", fmt.Sprintf("%d", limit))
+	if oldest != "" {
+		params.Set("oldest", oldest)
+	}
+	if latest != "" {
+		params.Set("latest", latest)
+	}
+
+	body, err := c.get("conversations.history", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Messages []Message `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return result.Messages, nil
+}
+
+// GetThreadReplies returns replies to a thread
+func (c *Client) GetThreadReplies(channel, threadTS string, limit int) ([]Message, error) {
+	params := url.Values{}
+	params.Set("channel", channel)
+	params.Set("ts", threadTS)
+	params.Set("limit", fmt.Sprintf("%d", limit))
+
+	body, err := c.get("conversations.replies", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Messages []Message `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return result.Messages, nil
+}
+
+// SearchMessages searches for messages
+func (c *Client) SearchMessages(query, sort, sortDir string, count int) ([]Message, error) {
+	params := url.Values{}
+	params.Set("query", query)
+	params.Set("sort", sort)
+	params.Set("sort_dir", sortDir)
+	params.Set("count", fmt.Sprintf("%d", count))
+
+	body, err := c.get("search.messages", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Messages struct {
+			Matches []struct {
+				Text    string `json:"text"`
+				TS      string `json:"ts"`
+				User    string `json:"user"`
+				Channel struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"channel"`
+			} `json:"matches"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	var messages []Message
+	for _, m := range result.Messages.Matches {
+		messages = append(messages, Message{
+			Text: m.Text,
+			TS:   m.TS,
+			User: m.User,
+		})
+	}
+
+	return messages, nil
+}
+
+// AddReaction adds an emoji reaction
+func (c *Client) AddReaction(channel, timestamp, name string) error {
+	data := map[string]interface{}{
+		"channel":   channel,
+		"timestamp": timestamp,
+		"name":      name,
+	}
+
+	_, err := c.post("reactions.add", data)
+	return err
+}
+
+// RemoveReaction removes an emoji reaction
+func (c *Client) RemoveReaction(channel, timestamp, name string) error {
+	data := map[string]interface{}{
+		"channel":   channel,
+		"timestamp": timestamp,
+		"name":      name,
+	}
+
+	_, err := c.post("reactions.remove", data)
+	return err
+}
+
+// GetTeamInfo returns workspace info
+func (c *Client) GetTeamInfo() (*Team, error) {
+	body, err := c.get("team.info", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Team Team `json:"team"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return &result.Team, nil
+}
+
+// CreateChannel creates a new channel
+func (c *Client) CreateChannel(name string, isPrivate bool) (*Channel, error) {
+	data := map[string]interface{}{
+		"name":       name,
+		"is_private": isPrivate,
+	}
+
+	body, err := c.post("conversations.create", data)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Channel Channel `json:"channel"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return &result.Channel, nil
+}
+
+// ArchiveChannel archives a channel
+func (c *Client) ArchiveChannel(channel string) error {
+	data := map[string]interface{}{
+		"channel": channel,
+	}
+	_, err := c.post("conversations.archive", data)
+	return err
+}
+
+// UnarchiveChannel unarchives a channel
+func (c *Client) UnarchiveChannel(channel string) error {
+	data := map[string]interface{}{
+		"channel": channel,
+	}
+	_, err := c.post("conversations.unarchive", data)
+	return err
+}
+
+// SetChannelTopic sets the channel topic
+func (c *Client) SetChannelTopic(channel, topic string) error {
+	data := map[string]interface{}{
+		"channel": channel,
+		"topic":   topic,
+	}
+	_, err := c.post("conversations.setTopic", data)
+	return err
+}
+
+// SetChannelPurpose sets the channel purpose
+func (c *Client) SetChannelPurpose(channel, purpose string) error {
+	data := map[string]interface{}{
+		"channel": channel,
+		"purpose": purpose,
+	}
+	_, err := c.post("conversations.setPurpose", data)
+	return err
+}
+
+// InviteToChannel invites users to a channel
+func (c *Client) InviteToChannel(channel string, users []string) error {
+	usersStr := ""
+	for i, u := range users {
+		if i > 0 {
+			usersStr += ","
+		}
+		usersStr += u
+	}
+
+	data := map[string]interface{}{
+		"channel": channel,
+		"users":   usersStr,
+	}
+	_, err := c.post("conversations.invite", data)
+	return err
+}
